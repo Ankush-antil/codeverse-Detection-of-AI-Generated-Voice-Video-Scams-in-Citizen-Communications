@@ -126,7 +126,7 @@ export default function VideoAnalysisScreen() {
 
   const pickVideo = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: ['video'],
       quality: 1,
     });
     if (!res.canceled) { setVideoAsset(res.assets[0]); setResult(null); }
@@ -134,7 +134,7 @@ export default function VideoAnalysisScreen() {
 
   const recordVideo = async () => {
     const res = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Videos,
+      mediaTypes: ['video'],
       quality: 1,
     });
     if (!res.canceled) { setVideoAsset(res.assets[0]); setResult(null); }
@@ -158,7 +158,7 @@ export default function VideoAnalysisScreen() {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS)
       );
-      const fetchPromise = fetch('https://api-inference.huggingface.co/models/umm-maybe/AI-image-detector', {
+      const fetchPromise = fetch('https://api-inference.huggingface.co/models/prithivMLmods/Deepfake-Detection-Model', {
         method: 'POST',
         headers: {
           Authorization: `Bearer ${HF_TOKEN}`,
