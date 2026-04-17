@@ -1,13 +1,5 @@
-import { Platform } from 'react-native';
-
-// Android emulator uses 10.0.2.2 to reach host machine's localhost
-// iOS simulator uses localhost directly
-// For physical device, use your computer's local IP address
-const BASE_URL = Platform.select({
-  android: 'http://10.146.29.237:5000',
-  ios: 'http://10.146.29.237:5000',
-  default: 'http://10.146.29.237:5000',
-});
+// Production: Render deployed backend
+const BASE_URL = 'https://ai-rakshak-server.onrender.com';
 
 interface RegisterData {
   name: string;
@@ -30,7 +22,7 @@ interface RegisterResponse {
 export async function registerUserAPI(data: RegisterData): Promise<RegisterResponse> {
   try {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     const response = await fetch(`${BASE_URL}/api/auth/register`, {
       method: 'POST',
@@ -44,7 +36,6 @@ export async function registerUserAPI(data: RegisterData): Promise<RegisterRespo
     return result;
   } catch (error) {
     console.warn('API Error fallback (Server unreachable or timed out):', error);
-    // Return a failed response that local slice can handle gracefully
     return {
       success: false,
       message: 'Could not connect to server. Data saved locally.',
