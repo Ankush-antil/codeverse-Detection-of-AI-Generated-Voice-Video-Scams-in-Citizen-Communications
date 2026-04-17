@@ -126,7 +126,7 @@ export default function VideoAnalysisScreen() {
 
   const pickVideo = async () => {
     const res = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['video'],
+      mediaTypes: ['videos'],
       quality: 1,
     });
     if (!res.canceled) { setVideoAsset(res.assets[0]); setResult(null); }
@@ -134,7 +134,7 @@ export default function VideoAnalysisScreen() {
 
   const recordVideo = async () => {
     const res = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['video'],
+      mediaTypes: ['videos'],
       quality: 1,
     });
     if (!res.canceled) { setVideoAsset(res.assets[0]); setResult(null); }
