@@ -7,7 +7,6 @@ import { Text, ActivityIndicator } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import * as ImagePicker from 'expo-image-picker';
 import * as FileSystem from 'expo-file-system/legacy';
-import * as VideoThumbnails from 'expo-video-thumbnails';
 import { useDispatch } from 'react-redux';
 import { addLog } from '../store/logsSlice';
 import ThreatActionModal from '../components/ThreatActionModal';
@@ -121,6 +120,7 @@ export default function VideoAnalysisScreen() {
   const dispatch = useDispatch();
   const [videoAsset, setVideoAsset] = useState<ImagePicker.ImagePickerAsset | null>(null);
   const [analyzing, setAnalyzing] = useState(false);
+  const [loadingMsg, setLoadingMsg] = useState('Scanning Video...');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [showThreatModal, setShowThreatModal] = useState(false);
 
@@ -140,75 +140,82 @@ export default function VideoAnalysisScreen() {
     if (!res.canceled) { setVideoAsset(res.assets[0]); setResult(null); }
   };
 
-  const connectToHuggingFaceAPI = async (asset: ImagePicker.ImagePickerAsset): Promise<AnalysisResult | null> => {
+  // ── Bitmind Video Deepfake Detection ──────────────────────────────────────
+  const connectToBitmindAPI = async (asset: ImagePicker.ImagePickerAsset): Promise<AnalysisResult | null> => {
     try {
-      // 1. Extract a frame near the 1-second mark
-      const { uri } = await VideoThumbnails.getThumbnailAsync(asset.uri, {
-        time: 1000,
-      });
+      const API_KEY = process.env.EXPO_PUBLIC_BITMIND_API_KEY || '';
+      const TIMEOUT_MS = 120000; // 2 min — video upload + AI analysis
 
-      // 2. Read as Base64 format for HuggingFace Inference API
-      const base64Data = await FileSystem.readAsStringAsync(uri, {
-        encoding: FileSystem.EncodingType.Base64,
-      });
+      // ── File size guard (Bitmind direct upload limit = 10MB) ──────────────
+      const fileInfo = await FileSystem.getInfoAsync(asset.uri);
+      const fileSizeMB = ('size' in fileInfo && fileInfo.size) ? fileInfo.size / (1024 * 1024) : 0;
+      if (fileSizeMB > 10) {
+        console.warn('[Bitmind] File too large for direct upload:', fileSizeMB.toFixed(1), 'MB');
+        return null; // fallback to SmartScan
+      }
 
-      // 3. Call HuggingFace Model
-      const HF_TOKEN = process.env.EXPO_PUBLIC_HF_TOKEN || 'YOUR_HF_TOKEN'; // Set your token in .env as EXPO_PUBLIC_HF_TOKEN
-      const TIMEOUT_MS = 30000;
+      setLoadingMsg('Uploading video to Bitmind AI...');
+
+      // Build multipart FormData — video + speed params
+      const formData = new FormData();
+      formData.append('video', {
+        uri: asset.uri,
+        name: asset.fileName || 'video.mp4',
+        type: 'video/mp4',
+      } as any);
+      // Limit to first 10 seconds at 1fps → reduces processing from 144 → ~10 frames
+      formData.append('endTime', '10');
+      formData.append('fps', '1');
+
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(() => reject(new Error('timeout')), TIMEOUT_MS)
       );
-      const fetchPromise = fetch('https://api-inference.huggingface.co/models/prithivMLmods/Deepfake-Detection-Model', {
+
+      const fetchPromise = fetch('https://api.bitmind.ai/detect-video', {
         method: 'POST',
-        headers: {
-          Authorization: `Bearer ${HF_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ inputs: base64Data }),
+        headers: { Authorization: `Bearer ${API_KEY}` },
+        body: formData,
       });
 
+      setLoadingMsg('Bitmind AI analyzing frames...');
       const response = await Promise.race([fetchPromise, timeoutPromise]) as Response;
-      if (!response.ok) throw new Error(`HuggingFace returned ${response.status}`);
 
-      const data = await response.json();
-      if (data.error && data.error.includes('is currently loading')) {
-          // Retry logic or just throw for fallback
-          throw new Error('HF Model is loading, wait a minute and try again');
+      if (!response.ok) {
+        console.warn('[Bitmind] Video API error:', response.status);
+        return null;
       }
-      
-      // Expected HF response: [{ label: 'FAKE', score: 0.98 }, { label: 'REAL', score: 0.02 }]
-      if (!Array.isArray(data) || data.length === 0) throw new Error('Invalid HF response format');
 
-      data.sort((a, b) => b.score - a.score);
-      const topLabel = data[0].label?.toUpperCase() || '';
-      const topScore = data[0].score || 0;
-
-      const isFake = topLabel.includes('FAKE') || topLabel.includes('AI') || topLabel.includes('DEEPFAKE') || topLabel.includes('ARTIFICIAL');
-      const conf = Math.round(topScore * 100);
+      // Response: { "isAI": true, "confidence": 0.87, "similarity": 0.0 }
+      const data = await response.json();
+      const confidence = Math.round((data.confidence ?? 0.5) * 100);
+      const isFake: boolean = data.isAI ?? false;
 
       return {
         type: isFake ? 'AI' : 'HUMAN',
-        confidence: conf < 50 ? 100 - conf : conf,
-        reasons: [{ 
-          label: 'HuggingFace AI Vision Check', 
-          detail: `AI facial analysis detected ${isFake ? 'manipulated' : 'authentic'} features based on extracted video frame.`, 
-          suspicious: isFake 
+        confidence,
+        reasons: [{
+          label: 'Bitmind AI Video Analysis',
+          detail: `Bitmind AI scanned the first 10 seconds of your video (1 frame/sec) and detected ${isFake ? 'AI-manipulated' : 'authentic'} content with ${confidence}% confidence.`,
+          suspicious: isFake,
         }],
         source: 'API',
       };
     } catch (e) {
-      console.log('HF API Error:', e);
-      return null; // fallback to smart scan
+      console.warn('[Bitmind] Video detection error:', e);
+      return null; // fallback to smart scan — no crash
     }
   };
+
+
 
   const analyzeVideo = async () => {
     if (!videoAsset) return;
     setAnalyzing(true);
+    setLoadingMsg('Starting analysis...');
 
     // Run API and metadata scan in parallel
     const [apiResult, metaResult] = await Promise.all([
-      connectToHuggingFaceAPI(videoAsset),
+      connectToBitmindAPI(videoAsset),
       Promise.resolve(analyzeMetadata(videoAsset)),
     ]);
 
@@ -223,6 +230,7 @@ export default function VideoAnalysisScreen() {
       };
     } else {
       // API failed — use smart metadata scan
+      setLoadingMsg('Running Smart Metadata Scan...');
       finalResult = {
         type: metaResult.isSuspicious ? 'AI' : 'HUMAN',
         confidence: metaResult.confidence,
@@ -294,8 +302,8 @@ export default function VideoAnalysisScreen() {
         {analyzing && (
           <View style={styles.loadingBox}>
             <ActivityIndicator color="#00D4FF" size={50} />
-            <Text style={styles.loadingText}>Scanning Video...</Text>
-            <Text style={styles.loadingSub}>Checking file fingerprint, metadata & AI model</Text>
+            <Text style={styles.loadingText}>{loadingMsg}</Text>
+            <Text style={styles.loadingSub}>This may take up to 2 minutes for large videos</Text>
           </View>
         )}
 
@@ -315,7 +323,7 @@ export default function VideoAnalysisScreen() {
                 {result.type === 'AI' ? 'FAKE VIDEO DETECTED' : 'AUTHENTIC VIDEO'}
               </Text>
               <Text style={styles.sourceTag}>
-                Detected by: {result.source === 'API' ? '🤖 AI Model + Smart Scan' : '🔍 Smart Metadata Scan'}
+                Detected by: {result.source === 'API' ? '🛡️ Bitmind AI + Smart Scan' : '🔍 Smart Metadata Scan'}
               </Text>
             </View>
 
