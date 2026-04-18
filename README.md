@@ -9,6 +9,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-Express-339933?style=flat-square&logo=node.js)](https://nodejs.org)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Atlas-47A248?style=flat-square&logo=mongodb)](https://mongodb.com)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?style=flat-square&logo=typescript)](https://typescriptlang.org)
+[![Bitmind AI](https://img.shields.io/badge/Bitmind-AI%20Detection-FF6B35?style=flat-square)](https://bitmind.ai)
 
 > *"Protect Yourself from AI Scams — Real-time, Multi-Modal, Built for Bharat."*
 
@@ -50,8 +51,8 @@ Deepfake voice and video technology has advanced to the point where AI-generated
 ### Objective
 
 AI-RAKSHAK is a **real-time, multi-modal mobile application** that:
-- Detects AI-generated voice in suspicious calls using audio signal analysis
-- Detects deepfake videos using AI model inference + smart metadata fingerprinting
+- Detects AI-generated voice in suspicious calls using **Bitmind AI audio analysis**
+- Detects deepfake videos using **Bitmind AI frame-level detection** + smart metadata fingerprinting
 - Protects vulnerable and elderly users through a family monitoring circle
 - Works **offline** using local smart scan when internet is unavailable
 - Logs all threats and allows users to block senders or report to Cyber Cell
@@ -105,14 +106,15 @@ AI-RAKSHAK is a **real-time, multi-modal mobile application** that:
 │ AUDIO  │      │    VIDEO    │   │  METADATA   │
 │ ENGINE │      │   ENGINE    │   │   ENGINE    │
 │        │      │             │   │             │
-│ expo-av│      │HuggingFace  │   │ Filename    │
-│ record │      │Deepfake API │   │ Bitrate     │
-│        │      │    +        │   │ Duration    │
-│Spectral│      │VideoThumb   │   │ Resolution  │
-│Breath  │      │ extraction  │   │ File format │
-│Tremor  │      │             │   │ 30+ keyword │
-│Emotion │      │  Fallback:  │   │ patterns    │
-│ check  │      │  SmartScan  │   │             │
+│ expo-av│      │ Bitmind AI  │   │ Filename    │
+│ record │      │detect-video │   │ Bitrate     │
+│        │      │  endpoint   │   │ Duration    │
+│Bitmind │      │    +        │   │ Resolution  │
+│ Audio  │      │VideoThumb   │   │ File format │
+│detect- │      │ extraction  │   │ 30+ keyword │
+│ image  │      │             │   │ patterns    │
+│ API    │      │  Fallback:  │   │             │
+│        │      │  SmartScan  │   │             │
 └───┬────┘      └──────┬──────┘   └──────┬──────┘
     │                  │                  │
     └──────────────────▼──────────────────┘
@@ -144,14 +146,15 @@ AI-RAKSHAK is a **real-time, multi-modal mobile application** that:
 
 ```
 Record Audio (expo-av HIGH_QUALITY)
-   → Stop & save audio file
-   → Extract URI hash for deterministic analysis
-   → Run 4 signal checks:
-       1. Spectral Analysis      → score %
-       2. Breathing Pattern      → score %
-       3. Micro Tremors          → score %
-       4. Emotion Matching       → score %
-   → Compute: type = AI | HUMAN, confidence = 82–99%
+   → Stop & save audio file (.m4a)
+   → Upload via multipart FormData to:
+       POST https://api.bitmind.ai/detect-image
+       Authorization: Bearer <BITMIND_API_KEY>
+       field: image (audio/m4a file)
+   → Response: { isAI: boolean, confidence: float }
+   → Compute: type = AI | HUMAN, confidence = 0–100%
+   → If API fails / timeout (30s) → Smart Audio Scan fallback
+       • File size heuristic (< 5 KB → suspicious)
    → If AI → Show ThreatActionModal (Block / Report)
    → Log result to Redux (type, confidence, timestamp)
 ```
@@ -160,30 +163,47 @@ Record Audio (expo-av HIGH_QUALITY)
 
 ```
 Select/Record Video (expo-image-picker)
+   → File size check (> 10 MB → skip API, use SmartScan)
    → Run in parallel:
-       ┌─────────────────────────────────────┐
-       │ HuggingFace API Path:               │
-       │  Extract frame at 1000ms            │
-       │  → Convert to Base64               │
-       │  → POST to HuggingFace             │
-       │    prithivMLmods/Deepfake-Detection │
-       │  → Parse label: FAKE/REAL          │
-       │  → confidence score                │
-       └─────────────────────────────────────┘
-       ┌─────────────────────────────────────┐
-       │ Smart Metadata Scan Path (offline): │
-       │  1. Filename keyword check          │
-       │     (deepfake, faceswap, GAN,       │
-       │      runway, sora, heygen etc.)     │
-       │  2. File extension (.webm/.gif flag)│
-       │  3. Bitrate proxy calculation       │
-       │  4. Duration heuristics (<5s flag)  │
-       │  5. Aspect ratio anomaly detection  │
-       └─────────────────────────────────────┘
-   → API success → merge both results
-   → API fail → use Smart Scan only
+       ┌─────────────────────────────────────────────┐
+       │ Bitmind AI API Path:                        │
+       │  POST https://api.bitmind.ai/detect-video   │
+       │  Authorization: Bearer <BITMIND_API_KEY>    │
+       │  FormData fields:                           │
+       │    video  → video file (video/mp4)          │
+       │    endTime → "10"  (first 10 seconds only)  │
+       │    fps     → "1"   (1 frame per second)     │
+       │  Timeout: 120 seconds                       │
+       │  Response: { isAI, confidence, similarity } │
+       └─────────────────────────────────────────────┘
+       ┌─────────────────────────────────────────────┐
+       │ Smart Metadata Scan Path (offline):         │
+       │  1. Filename keyword check                  │
+       │     (deepfake, faceswap, GAN,               │
+       │      runway, sora, heygen etc.)             │
+       │  2. File extension (.webm/.gif flag)        │
+       │  3. Bitrate proxy calculation               │
+       │  4. Duration heuristics (< 5s flag)         │
+       │  5. Aspect ratio anomaly detection          │
+       └─────────────────────────────────────────────┘
+   → API success → merge Bitmind result + metadata flags
+   → API fail / file too large → use Smart Scan only
    → Show verdict + detailed reason list
    → Log to Redux store
+```
+
+### Bitmind AI API Reference
+
+| Endpoint | Method | Purpose | Field Name | Timeout |
+|----------|--------|---------|------------|---------|
+| `https://api.bitmind.ai/detect-image` | POST | Audio deepfake detection | `image` (audio/m4a) | 30s |
+| `https://api.bitmind.ai/detect-video` | POST | Video deepfake detection | `video` (video/mp4) | 120s |
+
+**Authentication:** `Authorization: Bearer <your_api_key>`
+
+**Response format:**
+```json
+{ "isAI": true, "confidence": 0.87 }
 ```
 
 ### Backend Architecture
@@ -210,7 +230,7 @@ MongoDB Atlas (Mongoose ODM)
 ### Frontend (Mobile App)
 
 | Technology | Version | Purpose |
-|-----------|---------|---------|
+|-----------|---------|---------| 
 | **React Native** | 0.81.5 | Cross-platform mobile framework |
 | **Expo** | ~54.0.33 | Build toolchain & native APIs |
 | **TypeScript** | ~5.9.2 | Type-safe development |
@@ -219,15 +239,14 @@ MongoDB Atlas (Mongoose ODM)
 | **React Native Paper** | ^5.15.0 | Material Design UI components |
 | **expo-av** | ^16.0.8 | Audio recording for call analysis |
 | **expo-image-picker** | ~17.0.10 | Video upload + camera recording |
-| **expo-video-thumbnails** | ~10.0.8 | Extract video frame for AI analysis |
-| **expo-file-system** | legacy | Base64 file encoding for API upload |
+| **expo-file-system** | legacy | Base64 / file info encoding for API upload |
 | **i18next + react-i18next** | ^25.x | Multi-language support |
 | **@expo/vector-icons** | ^15.1.1 | MaterialCommunityIcons UI icons |
 
 ### Backend (Server)
 
 | Technology | Version | Purpose |
-|-----------|---------|---------|
+|-----------|---------|---------| 
 | **Node.js** | LTS | JavaScript runtime |
 | **Express.js** | ^4.x | REST API framework |
 | **MongoDB** | Atlas Cloud | Database for user storage |
@@ -239,10 +258,12 @@ MongoDB Atlas (Mongoose ODM)
 
 | Technology | Purpose |
 |-----------|---------|
-| **HuggingFace Inference API** | Cloud deepfake detection for video frames |
-| **prithivMLmods/Deepfake-Detection-Model** | Primary deepfake classification model |
-| **Smart Metadata Scan** | Offline heuristic-based video analysis engine |
-| **Audio Signal Analysis** | Spectral + breathing + tremor + emotion pattern checks |
+| **Bitmind AI — `detect-video`** | Frame-level video deepfake detection (primary, cloud-based) |
+| **Bitmind AI — `detect-image`** | Audio deepfake detection via image/audio endpoint (primary, cloud-based) |
+| **Smart Metadata Scan** | Offline heuristic-based video analysis engine (fallback) |
+| **Smart Audio Scan** | File-size heuristic audio analysis (fallback when Bitmind is unavailable) |
+
+> **Previous:** HuggingFace `prithivMLmods/Deepfake-Detection-Model` — **replaced by Bitmind AI in v2.0**
 
 ---
 
@@ -255,7 +276,7 @@ Before starting, make sure you have installed:
 - [Git](https://git-scm.com/)
 - **Expo Go** app on your Android/iOS device (from Play Store / App Store)
 - A [MongoDB Atlas](https://mongodb.com/atlas) account (free tier works)
-- A [HuggingFace](https://huggingface.co/) account for the API token
+- A **Bitmind AI** API key — get one from [bitmind.ai](https://bitmind.ai)
 
 ---
 
@@ -273,10 +294,13 @@ cd AI-RAKSHAK
 Create a `.env` file in the **root** of the project:
 
 ```env
-EXPO_PUBLIC_HF_TOKEN=your_huggingface_api_token_here
+EXPO_PUBLIC_BITMIND_API_KEY=your_bitmind_api_key_here
 ```
 
-> Get your HuggingFace token from: https://huggingface.co/settings/tokens
+> ⚠️ **Important:** This project uses **Bitmind AI** for deepfake detection (not HuggingFace).
+> Get your Bitmind API key from: https://bitmind.ai
+>
+> The key format is: `bitmind-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx:xxxxxxxx`
 
 ---
 
@@ -386,7 +410,10 @@ If the app can't connect to the backend, allow port 5000 through Windows Firewal
 |-------|-------|-----|
 | `Network Request Failed` | Phone can't reach server | Check IP in `api.ts`, same Wi-Fi, firewall |
 | `MongoDB connection error` | Wrong connection string | Check `server/.env` DATABASE_URL |
-| `HuggingFace API timeout` | Model loading (cold start) | Wait 1 min and retry — app falls back to Smart Scan |
+| `Bitmind API 401 Unauthorized` | Wrong or missing API key | Check `EXPO_PUBLIC_BITMIND_API_KEY` in root `.env` |
+| `Bitmind API timeout (video)` | Large video / slow network | Use a shorter video (< 30s) or wait — app falls back to Smart Scan |
+| `Bitmind API timeout (audio)` | Slow network | Wait 30s — app auto-falls back to Smart Audio Scan |
+| `File too large (video)` | Video file > 10 MB | App auto-switches to Smart Metadata Scan |
 | `Red screen on startup` | Dependency issue | Run `npm install` again, clear cache with `npx expo start --clear` |
 | `Expo Go version mismatch` | Old Expo Go app | Update Expo Go from Play Store / App Store |
 
@@ -401,8 +428,8 @@ If the app can't connect to the backend, allow port 5000 through Windows Firewal
 | **Language Selection** | `LanguageSelectionScreen.tsx` | Choose app language (i18n) |
 | **Register** | `RegisterScreen.tsx` | User registration → MongoDB |
 | **Home** | `HomeScreen.tsx` | Shield status, scan counter, quick actions |
-| **Call Analysis** | `CallAnalysisScreen.tsx` | Record audio → 4-signal analysis → verdict |
-| **Video Analysis** | `VideoAnalysisScreen.tsx` | Upload/record video → HuggingFace + Smart Scan |
+| **Call Analysis** | `CallAnalysisScreen.tsx` | Record audio → Bitmind AI `detect-image` → verdict |
+| **Video Analysis** | `VideoAnalysisScreen.tsx` | Upload/record video → Bitmind AI `detect-video` + Smart Scan |
 | **Alerts** | `AlertsScreen.tsx` | Full log of all past scan results |
 | **Family Protection** | `FamilyProtectionScreen.tsx` | Add/remove family members by mobile number |
 | **Settings** | `SettingsScreen.tsx` | App preferences and configuration |
@@ -414,7 +441,7 @@ If the app can't connect to the backend, allow port 5000 through Windows Firewal
 ### 🚀 Future Scope
 
 | Phase | Timeline | Feature |
-|-------|----------|---------|
+|-------|----------|---------| 
 | **Phase 2** | 3 months | UPI payment fraud detection + OTP scam alerts |
 | **Phase 3** | 6 months | Telecom/ISP API integration for network-level call screening |
 | **Phase 4** | 12 months | Government API integration with national helplines (CERT-In, Cyber Cell) |
@@ -428,10 +455,10 @@ If the app can't connect to the backend, allow port 5000 through Windows Firewal
 
 | Limitation | Description | Planned Fix |
 |-----------|-------------|-------------|
-| **Audio analysis is heuristic-based** | Current voice analysis uses deterministic simulation based on recording URI hash, not a real trained ML model | Replace with trained CNN/LSTM model on real deepfake audio datasets |
-| **HuggingFace API cold starts** | The free HuggingFace inference API takes 1–3 minutes to warm up on first use | Host a dedicated ML inference server or use a paid tier |
+| **Audio analysis uses image endpoint** | Bitmind's `detect-image` endpoint is used for audio analysis as a proxy; a dedicated audio endpoint would be more accurate | Use a purpose-built audio deepfake API or train own LSTM/CNN model |
+| **Video file size cap** | Bitmind direct upload is limited to 10 MB; larger files fall back to Smart Scan | Use chunked upload or server-side proxy to handle large files |
 | **No live call interception** | App analyzes recorded clips, not true live call streams | Requires OS-level permissions and potentially telecom partnerships |
-| **Video analysis is metadata-based** | Smart Scan uses file properties, not pixel-level neural analysis | Integrate on-device ViT/CNN model for frame-level deepfake detection |
+| **Smart Scan is metadata-based** | Offline fallback uses file properties, not pixel-level neural analysis | Integrate on-device ViT/CNN model for frame-level deepfake detection |
 | **Single backend route** | Server currently only handles auth (`/api/auth/`) | Expand with scan logging, threat reporting, and family notification APIs |
 | **No push notifications** | Threat alerts are only visible inside the app | Integrate Expo Notifications for real-time alerts |
 | **English UI only (partially)** | i18n infrastructure is ready but full translations are incomplete | Complete Hindi and regional language translations |
@@ -458,12 +485,23 @@ AI-RAKSHAK/
 │   ├── models/           # Mongoose models
 │   └── .env              # Server environment variables
 ├── assets/               # Images and icons
+├── .env                  # Frontend env (EXPO_PUBLIC_BITMIND_API_KEY)
 ├── App.tsx               # Root app component
 ├── app.json              # Expo config
 ├── eas.json              # EAS build config
 ├── render.yaml           # Cloud deployment config
 └── README.md             # This file
 ```
+
+---
+
+## 🔑 Environment Variables Summary
+
+| File | Variable | Description |
+|------|----------|-------------|
+| `.env` (root) | `EXPO_PUBLIC_BITMIND_API_KEY` | Bitmind AI API key for audio & video deepfake detection |
+| `server/.env` | `DATABASE_URL` | MongoDB Atlas connection string |
+| `server/.env` | `PORT` | Backend server port (default: 5000) |
 
 ---
 
@@ -479,5 +517,7 @@ This project was built for a competition by Team Codeverse. For questions or col
 **Built with ❤️ to protect every Indian citizen from AI-powered scams**
 
 *AI-RAKSHAK — Real-Time Deepfake Detection for Bharat*
+
+**v2.0 — Now powered by Bitmind AI**
 
 </div>
